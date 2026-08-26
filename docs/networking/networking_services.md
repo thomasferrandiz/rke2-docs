@@ -62,6 +62,101 @@ kubelet-arg:
 
 ```
 
+#### Customizing the NodeLocal DNS Corefile
+
+:::info Version Gate
+This feature is available starting from the September 2026 releases: v1.34.12+rke2r1, v1.35.9+rke2r1, v1.36.5+rke2r1 and v1.37.1+rke2r1.
+:::
+
+The Corefile used by the NodeLocal DNS cache is generated from four zones: `cluster` (your cluster domain), `reverse` (`in-addr.arpa`), `ipv6Reverse` (`ip6.arpa`) and `catchAll` (`.`). You can customize it at three increasing levels of control through the `nodelocal.corefile` values.
+
+:::note
+The `bind` and `health` directives are always managed by RKE2 based on the `use_cilium_lrp` setting and cannot be overridden. The `prometheus :9253`, `errors`, `reload` and `loop` directives are also fixed. When using a full `override` together with `use_cilium_lrp: true`, you are responsible for making the `bind`/`health` directives match the DaemonSet networking mode.
+:::
+
+**Level 1 — Add plugins to existing zones (`customPlugins`)**
+
+Add extra CoreDNS plugins to one or more zones. Plugins are appended after the `forward` directive and before `prometheus`. Each entry requires a `name` and accepts optional `parameters` and `configBlock` fields.
+
+```yaml
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-coredns
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    nodelocal:
+      enabled: true
+      corefile:
+        customPlugins:
+          cluster:
+            - name: log
+            - name: rewrite
+              configBlock: |
+                name example.com internal.local
+          catchAll:
+            - name: log
+```
+
+**Level 2 — Override cache or forward config per zone (`pluginOverrides`)**
+
+Replace the `cache` or `forward` plugin configuration for a given zone. Each entry accepts `parameters` (inline) and/or `configBlock` (braced block).
+
+```yaml
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-coredns
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    nodelocal:
+      enabled: true
+      corefile:
+        pluginOverrides:
+          cache:
+            cluster:
+              configBlock: |
+                success 9984 60
+                denial 9984 20
+                prefetch 10 60s 30%
+                serve_stale 5s
+                size 10000
+            reverse:
+              parameters: "60"
+          forward:
+            catchAll:
+              parameters: ". 8.8.8.8 8.8.4.4"
+```
+
+**Level 3 — Replace the entire Corefile (`override`)**
+
+Provide a complete Corefile verbatim. When `override` is set, all other `corefile` fields are ignored and you own the full config, including `bind`/`health` correctness.
+
+```yaml
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-coredns
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    nodelocal:
+      enabled: true
+      corefile:
+        override: |
+          cluster.local:53 {
+            errors
+            cache 30
+            bind 169.254.20.10
+            forward . 10.43.0.10
+          }
+```
+
 ### NodeLocal DNS Cache with Cilium in kube-proxy replacement mode
 This feature is available starting from versions v1.28.13+rke2r1, v1.29.8+rke2r1 and v1.30.4+rke2r1.
 
